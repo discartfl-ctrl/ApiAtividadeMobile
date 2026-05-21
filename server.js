@@ -6,7 +6,7 @@ app.use(express.json());
 
 // --- In-memory database ---
 let jogos = [
-  { id: 1, nome: "The Legend of Zel             da", tipo: "Aventura", nota: 10, review: "Um clássico absoluto." },
+  { id: 1, nome: "The Legend of Zelda", tipo: "Aventura", nota: 10, review: "Um clássico absoluto." },
   { id: 2, nome: "FIFA 23", tipo: "Esporte", nota: 7, review: "Bom para jogar com amigos." }
 ];
 let nextId = 3;
