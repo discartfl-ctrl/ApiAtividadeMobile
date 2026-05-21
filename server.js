@@ -9,9 +9,9 @@ app.use(express.json());
 let jogos = [
   { id: 1, nome: "The Legend of Zelda", tipo: "Aventura", nota: 10, review: "Um clássico absoluto." },
   { id: 2, nome: "FIFA 23", tipo: "Esporte", nota: 7, review: "Bom para jogar com amigos." },
-  { id: 4, nome: "Minecraft", tipo: "Sandbox", nota: 10, review: "Criatividade sem limites." },
-  { id: 8, nome: "Hollow Knight", tipo: "Metroidvania", nota: 9, review: "Arte linda e gameplay desafiador." },
-  { id: 10, nome: "Animal Crossing: New Horizons", tipo: "Simulação", nota: 9, review: "Relaxante e muito carismático." }
+  { id: 3, nome: "Minecraft", tipo: "Sandbox", nota: 10, review: "Criatividade sem limites." },
+  { id: 4, nome: "Hollow Knight", tipo: "Metroidvania", nota: 9, review: "Arte linda e gameplay desafiador." },
+  { id: 5, nome: "Animal Crossing: New Horizons", tipo: "Simulação", nota: 9, review: "Relaxante e muito carismático." }
 ];
 
 // --- Dynamic ID generator ---
