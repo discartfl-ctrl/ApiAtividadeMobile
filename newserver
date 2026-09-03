@@ -1,0 +1,1450 @@
+const express = require('express');
+const { v4: uuidv4 } = require('uuid');
+const cors = require('cors');
+
+const app = express();
+
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+/*
+ * ============================================================
+ * CONFIGURAÇÕES
+ * ============================================================
+ */
+
+const CONFIG = {
+  notaMinima: 0,
+  notaMaxima: 10,
+  limitePadrao: 10,
+  limiteMaximo: 50,
+  tokenExpiracaoHoras: 2,
+};
+
+const USUARIO = {
+  email: 'usuario@esoft.com',
+  password: 'Abc123',
+};
+
+/*
+ * ============================================================
+ * BANCO DE DADOS EM MEMÓRIA
+ * ============================================================
+ */
+
+let jogos = [
+  {
+    id: 1,
+    nome: 'The Legend of Zelda',
+    tipo: 'Aventura',
+    nota: 10,
+    review: 'Um clássico absoluto.',
+  },
+  {
+    id: 2,
+    nome: 'FIFA 23',
+    tipo: 'Esporte',
+    nota: 7,
+    review: 'Bom para jogar com amigos.',
+  },
+  {
+    id: 3,
+    nome: 'Minecraft',
+    tipo: 'Sandbox',
+    nota: 10,
+    review: 'Criatividade sem limites.',
+  },
+  {
+    id: 4,
+    nome: 'Hollow Knight',
+    tipo: 'Metroidvania',
+    nota: 9,
+    review: 'Arte linda e gameplay desafiador.',
+  },
+  {
+    id: 5,
+    nome: 'Animal Crossing: New Horizons',
+    tipo: 'Simulação',
+    nota: 9,
+    review: 'Relaxante e muito carismático.',
+  },
+];
+
+const tokens = new Map();
+
+/*
+ * ============================================================
+ * FUNÇÕES DE UTILIDADE
+ * ============================================================
+ */
+
+/**
+ * Verifica se um valor está vazio.
+ */
+function valorVazio(valor) {
+  return (
+    valor === undefined ||
+    valor === null ||
+    (typeof valor === 'string' && valor.trim() === '')
+  );
+}
+
+/**
+ * Converte um valor para texto.
+ */
+function paraTexto(valor, valorPadrao = '') {
+  if (valor === undefined || valor === null) {
+    return valorPadrao;
+  }
+
+  return String(valor).trim();
+}
+
+/**
+ * Converte um valor para número.
+ */
+function paraNumero(valor) {
+  if (valor === undefined || valor === null || valor === '') {
+    return null;
+  }
+
+  const numero = Number(valor);
+
+  if (!Number.isFinite(numero)) {
+    return null;
+  }
+
+  return numero;
+}
+
+/**
+ * Converte um ID para número inteiro.
+ */
+function converterId(valor) {
+  const numero = Number(valor);
+
+  if (!Number.isInteger(numero) || numero <= 0) {
+    return null;
+  }
+
+  return numero;
+}
+
+/**
+ * Gera o próximo ID disponível.
+ */
+function gerarProximoId() {
+  if (jogos.length === 0) {
+    return 1;
+  }
+
+  const ids = jogos
+    .map((jogo) => jogo.id)
+    .filter((id) => Number.isInteger(id))
+    .sort((a, b) => a - b);
+
+  let proximoId = 1;
+
+  for (const id of ids) {
+    if (id === proximoId) {
+      proximoId++;
+      continue;
+    }
+
+    if (id > proximoId) {
+      break;
+    }
+  }
+
+  return proximoId;
+}
+
+/**
+ * Procura um jogo pelo ID.
+ */
+function encontrarJogoPorId(id) {
+  return jogos.find((jogo) => jogo.id === id);
+}
+
+/**
+ * Procura o índice de um jogo.
+ */
+function encontrarIndicePorId(id) {
+  return jogos.findIndex((jogo) => jogo.id === id);
+}
+
+/**
+ * Cria uma resposta de erro padronizada.
+ */
+function respostaErro(res, status, mensagem, detalhes = null) {
+  const resposta = {
+    success: false,
+    error: mensagem,
+  };
+
+  if (detalhes) {
+    resposta.details = detalhes;
+  }
+
+  return res.status(status).json(resposta);
+}
+
+/**
+ * Cria uma resposta de sucesso padronizada.
+ */
+function respostaSucesso(res, status, dados) {
+  return res.status(status).json({
+    success: true,
+    data: dados,
+  });
+}
+
+/*
+ * ============================================================
+ * VALIDAÇÕES
+ * ============================================================
+ */
+
+/**
+ * Valida o nome do jogo.
+ */
+function validarNome(nome) {
+  const erros = [];
+
+  if (valorVazio(nome)) {
+    erros.push('O campo "nome" é obrigatório.');
+    return erros;
+  }
+
+  if (typeof nome !== 'string') {
+    erros.push('O campo "nome" deve ser texto.');
+    return erros;
+  }
+
+  const nomeLimpo = nome.trim();
+
+  if (nomeLimpo.length < 2) {
+    erros.push('O nome deve possuir pelo menos 2 caracteres.');
+  }
+
+  if (nomeLimpo.length > 100) {
+    erros.push('O nome deve possuir no máximo 100 caracteres.');
+  }
+
+  return erros;
+}
+
+/**
+ * Valida o tipo do jogo.
+ */
+function validarTipo(tipo) {
+  const erros = [];
+
+  if (tipo === undefined || tipo === null || tipo === '') {
+    return erros;
+  }
+
+  if (typeof tipo !== 'string') {
+    erros.push('O campo "tipo" deve ser texto.');
+    return erros;
+  }
+
+  if (tipo.trim().length > 50) {
+    erros.push('O tipo deve possuir no máximo 50 caracteres.');
+  }
+
+  return erros;
+}
+
+/**
+ * Valida a nota.
+ */
+function validarNota(nota) {
+  const erros = [];
+
+  if (nota === undefined || nota === null || nota === '') {
+    return erros;
+  }
+
+  const numero = paraNumero(nota);
+
+  if (numero === null) {
+    erros.push('O campo "nota" deve ser um número.');
+    return erros;
+  }
+
+  if (numero < CONFIG.notaMinima || numero > CONFIG.notaMaxima) {
+    erros.push(
+      `O campo "nota" deve estar entre ${CONFIG.notaMinima} e ${CONFIG.notaMaxima}.`
+    );
+  }
+
+  return erros;
+}
+
+/**
+ * Valida a review.
+ */
+function validarReview(review) {
+  const erros = [];
+
+  if (review === undefined || review === null || review === '') {
+    return erros;
+  }
+
+  if (typeof review !== 'string') {
+    erros.push('O campo "review" deve ser texto.');
+    return erros;
+  }
+
+  if (review.trim().length > 500) {
+    erros.push('A review deve possuir no máximo 500 caracteres.');
+  }
+
+  return erros;
+}
+
+/**
+ * Valida um jogo completo.
+ */
+function validarJogo(dados, parcial = false) {
+  const erros = [];
+
+  if (!parcial || dados.nome !== undefined) {
+    erros.push(...validarNome(dados.nome));
+  }
+
+  if (dados.tipo !== undefined) {
+    erros.push(...validarTipo(dados.tipo));
+  }
+
+  if (dados.nota !== undefined) {
+    erros.push(...validarNota(dados.nota));
+  }
+
+  if (dados.review !== undefined) {
+    erros.push(...validarReview(dados.review));
+  }
+
+  return erros;
+}
+
+/**
+ * Valida o corpo da requisição.
+ */
+function validarCorpoObjeto(req, res, next) {
+  if (
+    req.body === null ||
+    req.body === undefined ||
+    Array.isArray(req.body) ||
+    typeof req.body !== 'object'
+  ) {
+    return respostaErro(
+      res,
+      400,
+      'O corpo da requisição deve ser um objeto JSON.'
+    );
+  }
+
+  next();
+}
+
+/*
+ * ============================================================
+ * AUTENTICAÇÃO
+ * ============================================================
+ */
+
+/**
+ * Cria um token temporário.
+ */
+function criarToken(email) {
+  const token = uuidv4();
+
+  const criadoEm = Date.now();
+
+  const expiracao = criadoEm + CONFIG.tokenExpiracaoHoras * 60 * 60 * 1000;
+
+  tokens.set(token, {
+    email,
+    criadoEm,
+    expiracao,
+  });
+
+  return token;
+}
+
+/**
+ * Remove tokens expirados.
+ */
+function limparTokensExpirados() {
+  const agora = Date.now();
+
+  for (const [token, dados] of tokens.entries()) {
+    if (dados.expiracao <= agora) {
+      tokens.delete(token);
+    }
+  }
+}
+
+/**
+ * Obtém o token do cabeçalho Authorization.
+ */
+function obterToken(req) {
+  const authorization = req.headers.authorization;
+
+  if (!authorization) {
+    return null;
+  }
+
+  const partes = authorization.split(' ');
+
+  if (partes.length !== 2) {
+    return null;
+  }
+
+  if (partes[0].toLowerCase() !== 'bearer') {
+    return null;
+  }
+
+  return partes[1];
+}
+
+/**
+ * Middleware de autenticação.
+ */
+function autenticar(req, res, next) {
+  limparTokensExpirados();
+
+  const token = obterToken(req);
+
+  if (!token) {
+    return respostaErro(
+      res,
+      401,
+      'Token de autenticação não informado.'
+    );
+  }
+
+  const sessao = tokens.get(token);
+
+  if (!sessao) {
+    return respostaErro(
+      res,
+      401,
+      'Token inválido ou expirado.'
+    );
+  }
+
+  req.usuario = {
+    email: sessao.email,
+  };
+
+  next();
+}
+
+/*
+ * ============================================================
+ * FUNÇÕES DE FILTRO E ORDENAÇÃO
+ * ============================================================
+ */
+
+/**
+ * Filtra jogos pelo nome.
+ */
+function filtrarPorNome(lista, nome) {
+  if (valorVazio(nome)) {
+    return lista;
+  }
+
+  const termo = String(nome).toLowerCase().trim();
+
+  return lista.filter((jogo) =>
+    jogo.nome.toLowerCase().includes(termo)
+  );
+}
+
+/**
+ * Filtra jogos pelo tipo.
+ */
+function filtrarPorTipo(lista, tipo) {
+  if (valorVazio(tipo)) {
+    return lista;
+  }
+
+  const termo = String(tipo).toLowerCase().trim();
+
+  return lista.filter((jogo) =>
+    jogo.tipo.toLowerCase().includes(termo)
+  );
+}
+
+/**
+ * Filtra jogos pela nota mínima.
+ */
+function filtrarPorNotaMinima(lista, nota) {
+  if (nota === undefined) {
+    return lista;
+  }
+
+  const numero = paraNumero(nota);
+
+  if (numero === null) {
+    return [];
+  }
+
+  return lista.filter((jogo) => jogo.nota >= numero);
+}
+
+/**
+ * Filtra jogos pela nota máxima.
+ */
+function filtrarPorNotaMaxima(lista, nota) {
+  if (nota === undefined) {
+    return lista;
+  }
+
+  const numero = paraNumero(nota);
+
+  if (numero === null) {
+    return [];
+  }
+
+  return lista.filter((jogo) => jogo.nota <= numero);
+}
+
+/**
+ * Ordena uma lista de jogos.
+ */
+function ordenarJogos(lista, campo, ordem) {
+  const resultado = [...lista];
+
+  const direcao = ordem === 'desc' ? -1 : 1;
+
+  resultado.sort((a, b) => {
+    if (campo === 'nome') {
+      return a.nome.localeCompare(b.nome) * direcao;
+    }
+
+    if (campo === 'tipo') {
+      return a.tipo.localeCompare(b.tipo) * direcao;
+    }
+
+    if (campo === 'nota') {
+      return (a.nota - b.nota) * direcao;
+    }
+
+    if (campo === 'id') {
+      return (a.id - b.id) * direcao;
+    }
+
+    return a.id - b.id;
+  });
+
+  return resultado;
+}
+
+/**
+ * Aplica todos os filtros.
+ */
+function aplicarFiltros(lista, query) {
+  let resultado = [...lista];
+
+  resultado = filtrarPorNome(resultado, query.nome);
+  resultado = filtrarPorTipo(resultado, query.tipo);
+  resultado = filtrarPorNotaMinima(resultado, query.notaMin);
+  resultado = filtrarPorNotaMaxima(resultado, query.notaMax);
+
+  return resultado;
+}
+
+/**
+ * Aplica paginação.
+ */
+function aplicarPaginacao(lista, pagina, limite) {
+  const total = lista.length;
+
+  const totalPaginas =
+    total === 0 ? 0 : Math.ceil(total / limite);
+
+  const paginaAtual =
+    pagina > 0 ? Math.min(pagina, Math.max(totalPaginas, 1)) : 1;
+
+  const inicio = (paginaAtual - 1) * limite;
+
+  const dados = lista.slice(inicio, inicio + limite);
+
+  return {
+    dados,
+    paginacao: {
+      pagina: paginaAtual,
+      limite,
+      total,
+      totalPaginas,
+      temProxima: paginaAtual < totalPaginas,
+      temAnterior: paginaAtual > 1,
+    },
+  };
+}
+
+/*
+ * ============================================================
+ * ESTATÍSTICAS
+ * ============================================================
+ */
+
+/**
+ * Calcula a média das notas.
+ */
+function calcularMedia(lista) {
+  if (lista.length === 0) {
+    return 0;
+  }
+
+  const soma = lista.reduce(
+    (total, jogo) => total + jogo.nota,
+    0
+  );
+
+  return Number((soma / lista.length).toFixed(2));
+}
+
+/**
+ * Encontra o jogo com maior nota.
+ */
+function encontrarMelhorJogo(lista) {
+  if (lista.length === 0) {
+    return null;
+  }
+
+  return lista.reduce((melhor, atual) => {
+    return atual.nota > melhor.nota ? atual : melhor;
+  });
+}
+
+/**
+ * Encontra o jogo com menor nota.
+ */
+function encontrarPiorJogo(lista) {
+  if (lista.length === 0) {
+    return null;
+  }
+
+  return lista.reduce((pior, atual) => {
+    return atual.nota < pior.nota ? atual : pior;
+  });
+}
+
+/**
+ * Conta jogos por categoria.
+ */
+function contarPorTipo(lista) {
+  const categorias = {};
+
+  lista.forEach((jogo) => {
+    if (!categorias[jogo.tipo]) {
+      categorias[jogo.tipo] = 0;
+    }
+
+    categorias[jogo.tipo]++;
+  });
+
+  return categorias;
+}
+
+/*
+ * ============================================================
+ * LOGIN
+ * ============================================================
+ */
+
+app.post('/login', (req, res) => {
+  const { email, password } = req.body ?? {};
+
+  if (valorVazio(email) || valorVazio(password)) {
+    return respostaErro(
+      res,
+      400,
+      'Email e senha são obrigatórios.'
+    );
+  }
+
+  if (typeof email !== 'string') {
+    return respostaErro(
+      res,
+      400,
+      'O email deve ser informado como texto.'
+    );
+  }
+
+  if (typeof password !== 'string') {
+    return respostaErro(
+      res,
+      400,
+      'A senha deve ser informada como texto.'
+    );
+  }
+
+  if (
+    email.trim() !== USUARIO.email ||
+    password !== USUARIO.password
+  ) {
+    return respostaErro(
+      res,
+      401,
+      'Credenciais inválidas.'
+    );
+  }
+
+  const token = criarToken(email.trim());
+
+  return respostaSucesso(res, 200, {
+    token,
+    tokenType: 'Bearer',
+    expiresIn: `${CONFIG.tokenExpiracaoHoras} horas`,
+    user: {
+      email: email.trim(),
+    },
+  });
+});
+
+/*
+ * ============================================================
+ * LOGOUT
+ * ============================================================
+ */
+
+app.post('/logout', autenticar, (req, res) => {
+  const token = obterToken(req);
+
+  if (token) {
+    tokens.delete(token);
+  }
+
+  return respostaSucesso(res, 200, {
+    message: 'Logout realizado com sucesso.',
+  });
+});
+
+/*
+ * ============================================================
+ * GET /jogos
+ * ============================================================
+ */
+
+app.get('/jogos', (req, res) => {
+  const {
+    nome,
+    tipo,
+    notaMin,
+    notaMax,
+    ordenar = 'id',
+    ordem = 'asc',
+    pagina = 1,
+    limite = CONFIG.limitePadrao,
+  } = req.query;
+
+  let paginaNumero = Number(pagina);
+  let limiteNumero = Number(limite);
+
+  if (!Number.isInteger(paginaNumero) || paginaNumero < 1) {
+    paginaNumero = 1;
+  }
+
+  if (!Number.isInteger(limiteNumero) || limiteNumero < 1) {
+    limiteNumero = CONFIG.limitePadrao;
+  }
+
+  limiteNumero = Math.min(
+    limiteNumero,
+    CONFIG.limiteMaximo
+  );
+
+  const jogosFiltrados = aplicarFiltros(jogos, {
+    nome,
+    tipo,
+    notaMin,
+    notaMax,
+  });
+
+  const jogosOrdenados = ordenarJogos(
+    jogosFiltrados,
+    ordenar,
+    ordem
+  );
+
+  const resultado = aplicarPaginacao(
+    jogosOrdenados,
+    paginaNumero,
+    limiteNumero
+  );
+
+  return res.status(200).json({
+    success: true,
+    data: resultado.dados,
+    paginacao: resultado.paginacao,
+    filtros: {
+      nome: nome || null,
+      tipo: tipo || null,
+      notaMin: notaMin || null,
+      notaMax: notaMax || null,
+      ordenar,
+      ordem,
+    },
+  });
+});
+
+/*
+ * ============================================================
+ * GET /jogos/:id
+ * ============================================================
+ */
+
+app.get('/jogos/:id', (req, res) => {
+  const id = converterId(req.params.id);
+
+  if (id === null) {
+    return respostaErro(
+      res,
+      400,
+      'ID deve ser um número inteiro positivo.'
+    );
+  }
+
+  const jogo = encontrarJogoPorId(id);
+
+  if (!jogo) {
+    return respostaErro(
+      res,
+      404,
+      'Jogo não encontrado.'
+    );
+  }
+
+  return respostaSucesso(res, 200, jogo);
+});
+
+/*
+ * ============================================================
+ * POST /jogos
+ * ============================================================
+ */
+
+app.post(
+  '/jogos',
+  autenticar,
+  validarCorpoObjeto,
+  (req, res) => {
+    const {
+      nome,
+      tipo,
+      nota,
+      review,
+    } = req.body ?? {};
+
+    const erros = validarJogo({
+      nome,
+      tipo,
+      nota,
+      review,
+    });
+
+    if (erros.length > 0) {
+      return respostaErro(
+        res,
+        400,
+        'Existem dados inválidos.',
+        erros
+      );
+    }
+
+    const novoJogo = {
+      id: gerarProximoId(),
+      nome: paraTexto(nome),
+      tipo: paraTexto(tipo, 'Indefinido'),
+      nota:
+        nota === undefined || nota === null || nota === ''
+          ? 0
+          : Number(nota),
+      review: paraTexto(review),
+    };
+
+    jogos.push(novoJogo);
+
+    return respostaSucesso(
+      res,
+      201,
+      novoJogo
+    );
+  }
+);
+
+/*
+ * ============================================================
+ * PUT /jogos/:id
+ * ============================================================
+ */
+
+app.put(
+  '/jogos/:id',
+  autenticar,
+  validarCorpoObjeto,
+  (req, res) => {
+    const id = converterId(req.params.id);
+
+    if (id === null) {
+      return respostaErro(
+        res,
+        400,
+        'ID deve ser um número inteiro positivo.'
+      );
+    }
+
+    const index = encontrarIndicePorId(id);
+
+    if (index === -1) {
+      return respostaErro(
+        res,
+        404,
+        'Jogo não encontrado.'
+      );
+    }
+
+    const jogoAtual = jogos[index];
+
+    const dadosAtualizados = {
+      nome:
+        req.body.nome !== undefined
+          ? req.body.nome
+          : jogoAtual.nome,
+
+      tipo:
+        req.body.tipo !== undefined
+          ? req.body.tipo
+          : jogoAtual.tipo,
+
+      nota:
+        req.body.nota !== undefined
+          ? req.body.nota
+          : jogoAtual.nota,
+
+      review:
+        req.body.review !== undefined
+          ? req.body.review
+          : jogoAtual.review,
+    };
+
+    const erros = validarJogo(
+      dadosAtualizados,
+      true
+    );
+
+    if (erros.length > 0) {
+      return respostaErro(
+        res,
+        400,
+        'Existem dados inválidos.',
+        erros
+      );
+    }
+
+    jogos[index] = {
+      id,
+      nome: paraTexto(dadosAtualizados.nome),
+      tipo: paraTexto(
+        dadosAtualizados.tipo,
+        'Indefinido'
+      ),
+      nota: Number(dadosAtualizados.nota),
+      review: paraTexto(
+        dadosAtualizados.review
+      ),
+    };
+
+    return respostaSucesso(
+      res,
+      200,
+      jogos[index]
+    );
+  }
+);
+
+/*
+ * ============================================================
+ * PATCH /jogos/:id
+ * ============================================================
+ */
+
+app.patch(
+  '/jogos/:id',
+  autenticar,
+  validarCorpoObjeto,
+  (req, res) => {
+    const id = converterId(req.params.id);
+
+    if (id === null) {
+      return respostaErro(
+        res,
+        400,
+        'ID deve ser um número inteiro positivo.'
+      );
+    }
+
+    const index = encontrarIndicePorId(id);
+
+    if (index === -1) {
+      return respostaErro(
+        res,
+        404,
+        'Jogo não encontrado.'
+      );
+    }
+
+    const camposPermitidos = [
+      'nome',
+      'tipo',
+      'nota',
+      'review',
+    ];
+
+    const camposRecebidos = Object.keys(req.body);
+
+    const camposInvalidos = camposRecebidos.filter(
+      (campo) => !camposPermitidos.includes(campo)
+    );
+
+    if (camposInvalidos.length > 0) {
+      return respostaErro(
+        res,
+        400,
+        'Existem campos não permitidos.',
+        camposInvalidos
+      );
+    }
+
+    const jogoAtual = jogos[index];
+
+    const jogoAtualizado = {
+      ...jogoAtual,
+    };
+
+    if (req.body.nome !== undefined) {
+      jogoAtualizado.nome = paraTexto(
+        req.body.nome
+      );
+    }
+
+    if (req.body.tipo !== undefined) {
+      jogoAtualizado.tipo = paraTexto(
+        req.body.tipo,
+        'Indefinido'
+      );
+    }
+
+    if (req.body.nota !== undefined) {
+      jogoAtualizado.nota = Number(
+        req.body.nota
+      );
+    }
+
+    if (req.body.review !== undefined) {
+      jogoAtualizado.review = paraTexto(
+        req.body.review
+      );
+    }
+
+    const erros = validarJogo(
+      jogoAtualizado,
+      false
+    );
+
+    if (erros.length > 0) {
+      return respostaErro(
+        res,
+        400,
+        'Existem dados inválidos.',
+        erros
+      );
+    }
+
+    jogos[index] = jogoAtualizado;
+
+    return respostaSucesso(
+      res,
+      200,
+      jogos[index]
+    );
+  }
+);
+
+/*
+ * ============================================================
+ * DELETE /jogos/:id
+ * ============================================================
+ */
+
+app.delete(
+  '/jogos/:id',
+  autenticar,
+  (req, res) => {
+    const id = converterId(req.params.id);
+
+    if (id === null) {
+      return respostaErro(
+        res,
+        400,
+        'ID deve ser um número inteiro positivo.'
+      );
+    }
+
+    const index = encontrarIndicePorId(id);
+
+    if (index === -1) {
+      return respostaErro(
+        res,
+        404,
+        'Jogo não encontrado.'
+      );
+    }
+
+    const jogoRemovido = jogos[index];
+
+    jogos.splice(index, 1);
+
+    return respostaSucesso(
+      res,
+      200,
+      {
+        message: 'Jogo removido com sucesso.',
+        jogo: jogoRemovido,
+      }
+    );
+  }
+);
+
+/*
+ * ============================================================
+ * GET /estatisticas
+ * ============================================================
+ */
+
+app.get('/estatisticas', (req, res) => {
+  const melhorJogo = encontrarMelhorJogo(jogos);
+  const piorJogo = encontrarPiorJogo(jogos);
+
+  const estatisticas = {
+    totalJogos: jogos.length,
+    mediaNotas: calcularMedia(jogos),
+    maiorNota:
+      jogos.length > 0
+        ? Math.max(...jogos.map((jogo) => jogo.nota))
+        : 0,
+    menorNota:
+      jogos.length > 0
+        ? Math.min(...jogos.map((jogo) => jogo.nota))
+        : 0,
+    melhorJogo,
+    piorJogo,
+    jogosPorTipo: contarPorTipo(jogos),
+  };
+
+  return respostaSucesso(
+    res,
+    200,
+    estatisticas
+  );
+});
+
+/*
+ * ============================================================
+ * GET /tipos
+ * ============================================================
+ */
+
+app.get('/tipos', (req, res) => {
+  const tipos = [
+    ...new Set(
+      jogos.map((jogo) => jogo.tipo)
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+
+  return respostaSucesso(
+    res,
+    200,
+    {
+      total: tipos.length,
+      tipos,
+    }
+  );
+});
+
+/*
+ * ============================================================
+ * GET /melhores-jogos
+ * ============================================================
+ */
+
+app.get('/melhores-jogos', (req, res) => {
+  const quantidade = Number(
+    req.query.quantidade || 5
+  );
+
+  const limite =
+    Number.isInteger(quantidade) &&
+    quantidade > 0
+      ? Math.min(quantidade, 20)
+      : 5;
+
+  const melhores = [...jogos]
+    .sort((a, b) => {
+      if (b.nota !== a.nota) {
+        return b.nota - a.nota;
+      }
+
+      return a.nome.localeCompare(b.nome);
+    })
+    .slice(0, limite);
+
+  return respostaSucesso(
+    res,
+    200,
+    melhores
+  );
+});
+
+/*
+ * ============================================================
+ * GET /jogos/tipo/:tipo
+ * ============================================================
+ */
+
+app.get('/jogos/tipo/:tipo', (req, res) => {
+  const tipo = paraTexto(
+    req.params.tipo
+  ).toLowerCase();
+
+  if (!tipo) {
+    return respostaErro(
+      res,
+      400,
+      'O tipo do jogo é obrigatório.'
+    );
+  }
+
+  const encontrados = jogos.filter(
+    (jogo) =>
+      jogo.tipo.toLowerCase() === tipo
+  );
+
+  return respostaSucesso(
+    res,
+    200,
+    encontrados
+  );
+});
+
+/*
+ * ============================================================
+ * HEALTH CHECK
+ * ============================================================
+ */
+
+app.get('/health', (req, res) => {
+  return respostaSucesso(
+    res,
+    200,
+    {
+      status: 'online',
+      service: 'ApiAtividadeMobile',
+      timestamp: new Date().toISOString(),
+      totalJogos: jogos.length,
+      uptime: process.uptime(),
+    }
+  );
+});
+
+/*
+ * ============================================================
+ * INFORMAÇÕES DA API
+ * ============================================================
+ */
+
+app.get('/', (req, res) => {
+  return respostaSucesso(
+    res,
+    200,
+    {
+      nome: 'ApiAtividadeMobile',
+      versao: '2.0.0',
+      descricao:
+        'API REST para gerenciamento de jogos.',
+      endpoints: {
+        login: 'POST /login',
+        logout: 'POST /logout',
+        listarJogos: 'GET /jogos',
+        buscarJogo: 'GET /jogos/:id',
+        criarJogo: 'POST /jogos',
+        atualizarJogo: 'PUT /jogos/:id',
+        atualizarParcialmente:
+          'PATCH /jogos/:id',
+        removerJogo: 'DELETE /jogos/:id',
+        estatisticas: 'GET /estatisticas',
+        tipos: 'GET /tipos',
+        melhores:
+          'GET /melhores-jogos',
+        health: 'GET /health',
+      },
+    }
+  );
+});
+
+/*
+ * ============================================================
+ * ROTA NÃO ENCONTRADA
+ * ============================================================
+ */
+
+app.use((req, res) => {
+  return respostaErro(
+    res,
+    404,
+    'Rota não encontrada.'
+  );
+});
+
+/*
+ * ============================================================
+ * TRATAMENTO DE ERROS
+ * ============================================================
+ */
+
+app.use((err, req, res, next) => {
+  console.error(
+    '[ERRO INTERNO]',
+    err
+  );
+
+  if (res.headersSent) {
+    return next(err);
+  }
+
+  return respostaErro(
+    res,
+    500,
+    'Erro interno do servidor.'
+  );
+});
+
+/*
+ * ============================================================
+ * TRATAMENTO DE JSON INVÁLIDO
+ * ============================================================
+ */
+
+app.use(
+  (
+    err,
+    req,
+    res,
+    next
+  ) => {
+    if (
+      err instanceof SyntaxError &&
+      err.status === 400 &&
+      'body' in err
+    ) {
+      return respostaErro(
+        res,
+        400,
+        'JSON inválido.'
+      );
+    }
+
+    next(err);
+  }
+);
+
+/*
+ * ============================================================
+ * INICIALIZAÇÃO DO SERVIDOR
+ * ============================================================
+ */
+
+const servidor = app.listen(
+  PORT,
+  () => {
+    console.log(
+      '=================================================='
+    );
+
+    console.log(
+      `API rodando na porta ${PORT}`
+    );
+
+    console.log(
+      `Ambiente: ${
+        process.env.NODE_ENV || 'development'
+      }`
+    );
+
+    console.log(
+      `Total de jogos: ${jogos.length}`
+    );
+
+    console.log(
+      '=================================================='
+    );
+  }
+);
+
+/*
+ * ============================================================
+ * ENCERRAMENTO SEGURO
+ * ============================================================
+ */
+
+function encerrarServidor(sinal) {
+  console.log(
+    `Recebido sinal ${sinal}. Encerrando servidor...`
+  );
+
+  servidor.close(() => {
+    console.log(
+      'Servidor encerrado com sucesso.'
+    );
+
+    process.exit(0);
+  });
+}
+
+process.on(
+  'SIGTERM',
+  () => encerrarServidor('SIGTERM')
+);
+
+process.on(
+  'SIGINT',
+  () => encerrarServidor('SIGINT')
+);
+
+process.on(
+  'uncaughtException',
+  (erro) => {
+    console.error(
+      'Exceção não capturada:',
+      erro
+    );
+  }
+);
+
+process.on(
+  'unhandledRejection',
+  (erro) => {
+    console.error(
+      'Promise rejeitada:',
+      erro
+    );
+  }
+);
